@@ -513,6 +513,11 @@ export class BaileysStartupService extends ChannelStartupService {
         profilePictureUrl: this.instance.profilePictureUrl,
         ...this.stateConnection,
       });
+
+      // Run best-effort init queries now that the socket is open.
+      this.safeInitQueries().catch((err) => {
+        this.logger.warn({ msg: 'safeInitQueries after open failed', err: err?.toString() });
+      });
     }
 
     if (connection === 'connecting') {
@@ -668,14 +673,14 @@ export class BaileysStartupService extends ChannelStartupService {
       getMessage: async (key) => (await this.getMessage(key)) as Promise<proto.IMessage>,
       ...browserOptions,
       markOnlineOnConnect: this.localSettings.alwaysOnline,
-      retryRequestDelayMs: 350,
+      retryRequestDelayMs: 1000,
       maxMsgRetryCount: 4,
       // Disable Baileys automatic init queries (pre-key upload, privacy fetch, etc.)
       // and run them manually with retries so transient network errors don't
       // crash initialization or spam the logs.
       fireInitQueries: false,
-      connectTimeoutMs: 30_000,
-      keepAliveIntervalMs: 30_000,
+      connectTimeoutMs: 60_000,
+      keepAliveIntervalMs: 60_000,
       qrTimeout: 45_000,
       emitOwnEvents: false,
       shouldIgnoreJid: (jid) => {
