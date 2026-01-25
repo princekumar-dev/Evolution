@@ -95,7 +95,7 @@ export default async function useMultiFileAuthStatePrisma(
     const localFile = (key: string) => path.join(localFolder, fixFileName(key) + '.json');
     await fs.mkdir(localFolder, { recursive: true });
 
-    async function writeData(data: any, key: string): Promise<any> {
+    const writeData = async (data: any, key: string): Promise<any> => {
       const dataString = JSON.stringify(data, BufferJSON.replacer);
       const cacheConfig = configService.get<CacheConf>('CACHE');
 
@@ -109,116 +109,116 @@ export default async function useMultiFileAuthStatePrisma(
       }
       await saveKey(sessionId, dataString);
       return;
-    }
+    };
 
-    async function readData(key: string): Promise<any> {
-    try {
-      let rawData;
-      const cacheConfig = configService.get<CacheConf>('CACHE');
+    const readData = async (key: string): Promise<any> => {
+      try {
+        let rawData;
+        const cacheConfig = configService.get<CacheConf>('CACHE');
 
-      if (key != 'creds') {
-        if (cacheConfig.REDIS.ENABLED) {
-          return await cache.hGet(sessionId, key);
+        if (key != 'creds') {
+          if (cacheConfig.REDIS.ENABLED) {
+            return await cache.hGet(sessionId, key);
+          } else {
+            if (!(await fileExists(localFile(key)))) return null;
+            rawData = await fs.readFile(localFile(key), { encoding: 'utf-8' });
+            return JSON.parse(rawData, BufferJSON.reviver);
+          }
         } else {
-          if (!(await fileExists(localFile(key)))) return null;
-          rawData = await fs.readFile(localFile(key), { encoding: 'utf-8' });
-          return JSON.parse(rawData, BufferJSON.reviver);
+          rawData = await getAuthKey(sessionId);
         }
-      } else {
-        rawData = await getAuthKey(sessionId);
+
+        const parsedData = JSON.parse(rawData, BufferJSON.reviver);
+        return parsedData;
+      } catch {
+        return null;
       }
+    };
 
-      const parsedData = JSON.parse(rawData, BufferJSON.reviver);
-      return parsedData;
-    } catch {
-      return null;
-    }
-  }
+    const removeData = async (key: string): Promise<any> => {
+      try {
+        const cacheConfig = configService.get<CacheConf>('CACHE');
 
-  async function removeData(key: string): Promise<any> {
-    try {
-      const cacheConfig = configService.get<CacheConf>('CACHE');
-
-      if (key != 'creds') {
-        if (cacheConfig.REDIS.ENABLED) {
-          return await cache.hDelete(sessionId, key);
+        if (key != 'creds') {
+          if (cacheConfig.REDIS.ENABLED) {
+            return await cache.hDelete(sessionId, key);
+          } else {
+            await fs.unlink(localFile(key));
+          }
         } else {
-          await fs.unlink(localFile(key));
+          await deleteAuthKey(sessionId);
         }
-      } else {
-        await deleteAuthKey(sessionId);
-      }
-    } catch {
-      return;
-    }
-  }
-
-  async function removeCreds(): Promise<any> {
-    const cacheConfig = configService.get<CacheConf>('CACHE');
-
-    // Redis
-    try {
-      if (cacheConfig.REDIS.ENABLED) {
-        await cache.delete(sessionId);
-        logger.info({ action: 'redis.delete', sessionId });
-
+      } catch {
         return;
       }
-    } catch (err) {
-      logger.warn({ action: 'redis.delete', sessionId, err });
+    };
+
+    const removeCreds = async (): Promise<any> => {
+      const cacheConfig = configService.get<CacheConf>('CACHE');
+
+      // Redis
+      try {
+        if (cacheConfig.REDIS.ENABLED) {
+          await cache.delete(sessionId);
+          logger.info({ action: 'redis.delete', sessionId });
+
+          return;
+        }
+      } catch (err) {
+        logger.warn({ action: 'redis.delete', sessionId, err });
+      }
+
+      logger.info({ action: 'auth.key.delete', sessionId });
+
+      await deleteAuthKey(sessionId);
+    };
+
+    let creds = await readData('creds');
+    if (!creds) {
+      creds = initAuthCreds();
+      await writeData(creds, 'creds');
     }
 
-    logger.info({ action: 'auth.key.delete', sessionId });
+    logger.info(`Auth state loaded successfully for session: ${sessionId}`);
 
-    await deleteAuthKey(sessionId);
-  }
+    return {
+      state: {
+        creds,
+        keys: {
+          get: async (type, ids) => {
+            const data = {};
+            await Promise.all(
+              ids.map(async (id) => {
+                let value = await readData(`${type}-${id}`);
+                if (type === 'app-state-sync-key' && value) {
+                  value = proto.Message.AppStateSyncKeyData.create(value);
+                }
 
-  let creds = await readData('creds');
-  if (!creds) {
-    creds = initAuthCreds();
-    await writeData(creds, 'creds');
-  }
+                data[id] = value;
+              }),
+            );
+            return data;
+          },
+          set: async (data) => {
+            const tasks = [];
+            for (const category in data) {
+              for (const id in data[category]) {
+                const value = data[category][id];
+                const key = `${category}-${id}`;
 
-  logger.info(`Auth state loaded successfully for session: ${sessionId}`);
-
-  return {
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const data = {};
-          await Promise.all(
-            ids.map(async (id) => {
-              let value = await readData(`${type}-${id}`);
-              if (type === 'app-state-sync-key' && value) {
-                value = proto.Message.AppStateSyncKeyData.create(value);
+                tasks.push(value ? writeData(value, key) : removeData(key));
               }
-
-              data[id] = value;
-            }),
-          );
-          return data;
-        },
-        set: async (data) => {
-          const tasks = [];
-          for (const category in data) {
-            for (const id in data[category]) {
-              const value = data[category][id];
-              const key = `${category}-${id}`;
-
-              tasks.push(value ? writeData(value, key) : removeData(key));
             }
-          }
-          await Promise.all(tasks);
+            await Promise.all(tasks);
+          },
         },
       },
-    },
-    saveCreds: () => {
-      return writeData(creds, 'creds');
-    },
+      saveCreds: () => {
+        return writeData(creds, 'creds');
+      },
 
-    removeCreds,
-  };
+      removeCreds,
+    };
   } catch (error) {
     logger.error('Failed to initialize auth state: ' + error.message);
     throw new Error(`Failed to initialize auth state for session ${sessionId}: ${error.message}`);

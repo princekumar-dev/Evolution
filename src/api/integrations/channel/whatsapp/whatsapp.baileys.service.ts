@@ -554,7 +554,6 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async defineAuthState() {
-    const db = this.configService.get<Database>('DATABASE');
     const cache = this.configService.get<CacheConf>('CACHE');
 
     const provider = this.configService.get<ProviderSession>('PROVIDER');
@@ -573,11 +572,11 @@ export class BaileysStartupService extends ChannelStartupService {
       // Default fallback - use Prisma as default storage
       this.logger.info('Using Prisma as default auth state storage');
       const authState = await useMultiFileAuthStatePrisma(this.instance.id, this.cache);
-      
+
       if (!authState || !authState.state) {
         throw new Error('Prisma auth state initialization returned invalid state');
       }
-      
+
       this.logger.info('Prisma auth state initialized successfully');
       return authState;
     } catch (error) {
