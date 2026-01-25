@@ -17,13 +17,14 @@ import {
 } from '@config/env.config';
 import { onUnexpectedError } from '@config/error.config';
 import { Logger } from '@config/logger.config';
-import { ROOT_DIR } from '@config/path.config';
+import { INSTANCE_DIR, ROOT_DIR } from '@config/path.config';
 import * as Sentry from '@sentry/node';
 import { ServerUP } from '@utils/server-up';
 import axios from 'axios';
 import compression from 'compression';
 import cors from 'cors';
 import express, { json, NextFunction, Request, Response, urlencoded } from 'express';
+import { mkdirSync } from 'fs';
 import { join } from 'path';
 
 async function initWA() {
@@ -158,6 +159,13 @@ async function bootstrap() {
   }
 
   server.listen(httpServer.PORT, () => logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT));
+
+  // Ensure INSTANCE_DIR exists to avoid ENOENT on runtime file writes
+  try {
+    mkdirSync(INSTANCE_DIR, { recursive: true });
+  } catch (err) {
+    logger.warn('Could not ensure INSTANCE_DIR exists: ' + err?.message);
+  }
 
   initWA().catch((error) => {
     logger.error('Error loading instances: ' + error);
