@@ -4082,11 +4082,41 @@ export class BaileysStartupService extends ChannelStartupService {
       this.logger.error({ msg: 'safeInitQueries: fetchPrivacySettings failed', err: err?.toString() });
     }
 
-    // Additional init steps (pre-key upload) are handled internally by Baileys
-    // when fireInitQueries is enabled. Since we disabled it, rely on Baileys
-    // to attempt upload on demand or allow runtime operations to trigger
-    // necessary background uploads. Avoid forcing pre-key upload here to
-    // prevent repeated timeouts when network is unstable.
+    // Attempt a best-effort pre-key upload using Baileys if available.
+    if (this.client && this.stateConnection?.state === 'open') {
+      const maxAttempts = 3;
+      const baseDelay = 2000;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          // Many Baileys builds expose a helper to upload pre-keys; call it if present.
+          const uploadFn = (this.client as any).uploadPreKeys || (this.client as any).uploadPreKeysToServer;
+          if (uploadFn && typeof uploadFn === 'function') {
+            this.logger.info({ msg: 'Attempting pre-key upload', attempt });
+            // call the upload function - do not await indefinitely
+            await uploadFn.call(this.client);
+            this.logger.info({ msg: 'Pre-key upload succeeded' });
+            break;
+          } else {
+            // If Baileys doesn't expose a named helper, skip explicit upload.
+            this.logger.info({ msg: 'No explicit pre-key upload method available on client' });
+            break;
+          }
+        } catch (err) {
+          const msg = err?.toString() || err;
+          this.logger.warn({ msg: 'pre-key upload attempt failed', attempt, err: msg });
+          if (attempt < maxAttempts) {
+            const wait = baseDelay * Math.pow(2, attempt - 1);
+            await new Promise((res) => setTimeout(res, wait));
+            continue;
+          }
+
+          this.logger.error({ msg: 'pre-key upload exhausted retries', err: msg });
+        }
+      }
+    } else {
+      this.logger.info({ msg: 'Skipping pre-key upload: socket not open' });
+    }
   }
 
   public async updatePrivacySettings(settings: PrivacySettingDto) {
