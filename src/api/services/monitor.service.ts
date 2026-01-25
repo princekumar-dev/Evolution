@@ -243,7 +243,14 @@ export class WAMonitoringService {
   public async saveInstance(data: any) {
     try {
       const clientName = await this.configService.get<Database>('DATABASE').CONNECTION.CLIENT_NAME;
-      await this.prismaRepository.instance.create({
+      this.logger.info({
+        message: 'Saving instance to database',
+        instanceName: data.instanceName,
+        instanceId: data.instanceId,
+        clientName,
+      });
+
+      const created = await this.prismaRepository.instance.create({
         data: {
           id: data.instanceId,
           name: data.instanceName,
@@ -259,8 +266,19 @@ export class WAMonitoringService {
           businessId: data.businessId,
         },
       });
+
+      this.logger.info({ message: 'Instance saved to database', id: created.id, name: created.name });
+      return created;
     } catch (error) {
-      this.logger.error(error);
+      this.logger.error({
+        localError: 'saveInstance',
+        message: 'Failed to save instance to database',
+        data: {
+          instanceName: data?.instanceName,
+          instanceId: data?.instanceId,
+        },
+        error,
+      });
     }
   }
 
