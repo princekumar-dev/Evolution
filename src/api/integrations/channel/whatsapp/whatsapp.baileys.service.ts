@@ -374,7 +374,17 @@ export class BaileysStartupService extends ChannelStartupService {
 
       if (this.phoneNumber) {
         await delay(1000);
-        this.instance.qrcode.pairingCode = await this.client.requestPairingCode(this.phoneNumber);
+        if (this.stateConnection?.state === 'open') {
+          try {
+            this.instance.qrcode.pairingCode = await this.client.requestPairingCode(this.phoneNumber);
+          } catch (err) {
+            this.logger.warn({ msg: 'requestPairingCode failed or socket not ready', err: err?.toString() });
+            this.instance.qrcode.pairingCode = null;
+          }
+        } else {
+          this.logger.info({ msg: 'Skipping requestPairingCode: socket not open', state: this.stateConnection?.state });
+          this.instance.qrcode.pairingCode = null;
+        }
       } else {
         this.instance.qrcode.pairingCode = null;
       }
