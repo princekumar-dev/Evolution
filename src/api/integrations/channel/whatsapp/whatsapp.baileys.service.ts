@@ -4007,6 +4007,19 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async fetchPrivacySettings() {
+    // If socket is not open, avoid attempting network calls which will fail
+    if (!this.client || this.stateConnection?.state !== 'open') {
+      this.logger.warn({ msg: 'fetchPrivacySettings skipped: socket not open', state: this.stateConnection?.state });
+      return {
+        readreceipts: null,
+        profile: null,
+        status: null,
+        online: null,
+        last: null,
+        groupadd: null,
+      };
+    }
+
     const maxAttempts = 3;
     const baseDelay = 1000;
 
@@ -4023,7 +4036,11 @@ export class BaileysStartupService extends ChannelStartupService {
           groupadd: privacy?.groupadd ?? null,
         };
       } catch (err) {
-        this.logger.error({ msg: 'fetchPrivacySettings attempt failed', attempt, err: err?.toString() });
+        // Treat connection closed / transient network errors as warnings
+        const msg = err?.toString() || err;
+        const level = msg && msg.toLowerCase().includes('connection closed') ? 'warn' : 'error';
+        if (level === 'warn') this.logger.warn({ msg: 'fetchPrivacySettings attempt failed', attempt, err: msg });
+        else this.logger.error({ msg: 'fetchPrivacySettings attempt failed', attempt, err: msg });
 
         if (attempt < maxAttempts) {
           // exponential backoff
