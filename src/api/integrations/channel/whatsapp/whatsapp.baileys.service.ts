@@ -4037,8 +4037,13 @@ export class BaileysStartupService extends ChannelStartupService {
       } catch (err) {
         // Treat connection closed / transient network errors as warnings
         const msg = err?.toString() || err;
-        const level = msg && msg.toLowerCase().includes('connection closed') ? 'warn' : 'error';
-        if (level === 'warn') this.logger.warn({ msg: 'fetchPrivacySettings attempt failed', attempt, err: msg });
+        const lc = (msg || '').toString().toLowerCase();
+        const transient =
+          lc.includes('connection closed') ||
+          lc.includes('stream erro') ||
+          lc.includes('time-out') ||
+          lc.includes('timeout');
+        if (transient) this.logger.warn({ msg: 'fetchPrivacySettings attempt failed', attempt, err: msg });
         else this.logger.error({ msg: 'fetchPrivacySettings attempt failed', attempt, err: msg });
 
         if (attempt < maxAttempts) {
@@ -4103,6 +4108,12 @@ export class BaileysStartupService extends ChannelStartupService {
           }
         } catch (err) {
           const msg = err?.toString() || err;
+          const lc = (msg || '').toString().toLowerCase();
+          const transient =
+            lc.includes('connection closed') ||
+            lc.includes('stream erro') ||
+            lc.includes('time-out') ||
+            lc.includes('timeout');
           this.logger.warn({ msg: 'pre-key upload attempt failed', attempt, err: msg });
           if (attempt < maxAttempts) {
             const wait = baseDelay * Math.pow(2, attempt - 1);
@@ -4110,7 +4121,8 @@ export class BaileysStartupService extends ChannelStartupService {
             continue;
           }
 
-          this.logger.error({ msg: 'pre-key upload exhausted retries', err: msg });
+          if (transient) this.logger.warn({ msg: 'pre-key upload exhausted retries (transient)', err: msg });
+          else this.logger.error({ msg: 'pre-key upload exhausted retries', err: msg });
         }
       }
     } else {
