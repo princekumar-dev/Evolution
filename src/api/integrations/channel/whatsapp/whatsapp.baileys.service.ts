@@ -420,10 +420,30 @@ export class BaileysStartupService extends ChannelStartupService {
         ),
       );
 
-      await this.prismaRepository.instance.update({
-        where: { id: this.instanceId },
-        data: { connectionStatus: 'connecting' },
-      });
+      try {
+        await this.prismaRepository.instance.update({
+          where: { id: this.instanceId },
+          data: { connectionStatus: 'connecting' },
+        });
+      } catch (err) {
+        const code = (err as any)?.code;
+        if (code === 'P2025') {
+          this.logger.warn({
+            msg: 'Instance row not found when updating connectionStatus to connecting; skipping update',
+            instanceId: this.instanceId,
+          });
+          try {
+            await this.prismaRepository.instance.create({
+              data: { id: this.instanceId, name: this.instance.name, connectionStatus: 'connecting' as any },
+            });
+            this.logger.info({ msg: 'Created missing instance row after failed update', instanceId: this.instanceId });
+          } catch (createErr) {
+            this.logger.error({ msg: 'Failed to create missing instance row', err: createErr?.toString() });
+          }
+        } else {
+          this.logger.error({ msg: 'Failed to update instance connectionStatus', err: err?.toString() });
+        }
+      }
     }
 
     if (connection) {
@@ -448,15 +468,27 @@ export class BaileysStartupService extends ChannelStartupService {
           disconnectionObject: JSON.stringify(lastDisconnect),
         });
 
-        await this.prismaRepository.instance.update({
-          where: { id: this.instanceId },
-          data: {
-            connectionStatus: 'close',
-            disconnectionAt: new Date(),
-            disconnectionReasonCode: statusCode,
-            disconnectionObject: JSON.stringify(lastDisconnect),
-          },
-        });
+        try {
+          await this.prismaRepository.instance.update({
+            where: { id: this.instanceId },
+            data: {
+              connectionStatus: 'close',
+              disconnectionAt: new Date(),
+              disconnectionReasonCode: statusCode,
+              disconnectionObject: JSON.stringify(lastDisconnect),
+            },
+          });
+        } catch (err) {
+          const code = (err as any)?.code;
+          if (code === 'P2025') {
+            this.logger.warn({
+              msg: 'Instance row not found when updating connectionStatus to close; skipping update',
+              instanceId: this.instanceId,
+            });
+          } else {
+            this.logger.error({ msg: 'Failed to update instance on close', err: err?.toString() });
+          }
+        }
 
         if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
           this.chatwootService.eventWhatsapp(
@@ -497,15 +529,42 @@ export class BaileysStartupService extends ChannelStartupService {
       `,
       );
 
-      await this.prismaRepository.instance.update({
-        where: { id: this.instanceId },
-        data: {
-          ownerJid: this.instance.wuid,
-          profileName: (await this.getProfileName()) as string,
-          profilePicUrl: this.instance.profilePictureUrl,
-          connectionStatus: 'open',
-        },
-      });
+      try {
+        await this.prismaRepository.instance.update({
+          where: { id: this.instanceId },
+          data: {
+            ownerJid: this.instance.wuid,
+            profileName: (await this.getProfileName()) as string,
+            profilePicUrl: this.instance.profilePictureUrl,
+            connectionStatus: 'open',
+          },
+        });
+      } catch (err) {
+        const code = (err as any)?.code;
+        if (code === 'P2025') {
+          this.logger.warn({
+            msg: 'Instance row not found when updating connectionStatus to open; attempting to create row',
+            instanceId: this.instanceId,
+          });
+          try {
+            await this.prismaRepository.instance.create({
+              data: {
+                id: this.instanceId,
+                name: this.instance.name,
+                ownerJid: this.instance.wuid,
+                profileName: (await this.getProfileName()) as string,
+                profilePicUrl: this.instance.profilePictureUrl,
+                connectionStatus: 'open',
+              },
+            });
+            this.logger.info({ msg: 'Created missing instance row on open', instanceId: this.instanceId });
+          } catch (createErr) {
+            this.logger.error({ msg: 'Failed to create missing instance row on open', err: createErr?.toString() });
+          }
+        } else {
+          this.logger.error({ msg: 'Failed to update instance on open', err: err?.toString() });
+        }
+      }
 
       if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
         this.chatwootService.eventWhatsapp(
