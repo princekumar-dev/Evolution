@@ -724,12 +724,6 @@ export class BaileysStartupService extends ChannelStartupService {
 
     this.client = makeWASocket(socketConfig);
 
-    // Run init queries (privacy / pre-key upload) in a safe manner with retries.
-    // These are best-effort — failures are logged but won't throw.
-    this.safeInitQueries().catch((err) => {
-      this.logger.error({ msg: 'safeInitQueries failed', err: err?.toString() });
-    });
-
     if (this.localSettings.wavoipToken && this.localSettings.wavoipToken.length > 0) {
       useVoiceCallsBaileys(this.localSettings.wavoipToken, this.client, this.connectionStatus.state as any, true);
     }
