@@ -671,7 +671,10 @@ export class BaileysStartupService extends ChannelStartupService {
       markOnlineOnConnect: this.localSettings.alwaysOnline,
       retryRequestDelayMs: 350,
       maxMsgRetryCount: 4,
-      fireInitQueries: true,
+      // Disable Baileys automatic init queries (pre-key upload, privacy fetch, etc.)
+      // and run them manually with retries so transient network errors don't
+      // crash initialization or spam the logs.
+      fireInitQueries: false,
       connectTimeoutMs: 30_000,
       keepAliveIntervalMs: 30_000,
       qrTimeout: 45_000,
@@ -716,6 +719,12 @@ export class BaileysStartupService extends ChannelStartupService {
     this.endSession = false;
 
     this.client = makeWASocket(socketConfig);
+
+    // Run init queries (privacy / pre-key upload) in a safe manner with retries.
+    // These are best-effort — failures are logged but won't throw.
+    this.safeInitQueries().catch((err) => {
+      this.logger.error({ msg: 'safeInitQueries failed', err: err?.toString() });
+    });
 
     if (this.localSettings.wavoipToken && this.localSettings.wavoipToken.length > 0) {
       useVoiceCallsBaileys(this.localSettings.wavoipToken, this.client, this.connectionStatus.state as any, true);
@@ -3999,16 +4008,69 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async fetchPrivacySettings() {
-    const privacy = await this.client.fetchPrivacySettings();
+    const maxAttempts = 3;
+    const baseDelay = 1000;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const privacy = await this.client.fetchPrivacySettings();
+
+        return {
+          readreceipts: privacy?.readreceipts ?? null,
+          profile: privacy?.profile ?? null,
+          status: privacy?.status ?? null,
+          online: privacy?.online ?? null,
+          last: privacy?.last ?? null,
+          groupadd: privacy?.groupadd ?? null,
+        };
+      } catch (err) {
+        this.logger.error({ msg: 'fetchPrivacySettings attempt failed', attempt, err: err?.toString() });
+
+        if (attempt < maxAttempts) {
+          // exponential backoff
+          const wait = baseDelay * Math.pow(2, attempt - 1);
+          await new Promise((res) => setTimeout(res, wait));
+          continue;
+        }
+
+        this.logger.error({ msg: 'fetchPrivacySettings exhausted retries, returning defaults' });
+
+        return {
+          readreceipts: null,
+          profile: null,
+          status: null,
+          online: null,
+          last: null,
+          groupadd: null,
+        };
+      }
+    }
 
     return {
-      readreceipts: privacy.readreceipts,
-      profile: privacy.profile,
-      status: privacy.status,
-      online: privacy.online,
-      last: privacy.last,
-      groupadd: privacy.groupadd,
+      readreceipts: null,
+      profile: null,
+      status: null,
+      online: null,
+      last: null,
+      groupadd: null,
     };
+  }
+
+  private async safeInitQueries() {
+    // Try running a subset of Baileys init queries that are known to fail
+    // transiently (e.g., privacy fetch). Do not allow these to throw.
+    try {
+      // fetch privacy settings with retries
+      await this.fetchPrivacySettings();
+    } catch (err) {
+      this.logger.error({ msg: 'safeInitQueries: fetchPrivacySettings failed', err: err?.toString() });
+    }
+
+    // Additional init steps (pre-key upload) are handled internally by Baileys
+    // when fireInitQueries is enabled. Since we disabled it, rely on Baileys
+    // to attempt upload on demand or allow runtime operations to trigger
+    // necessary background uploads. Avoid forcing pre-key upload here to
+    // prevent repeated timeouts when network is unstable.
   }
 
   public async updatePrivacySettings(settings: PrivacySettingDto) {

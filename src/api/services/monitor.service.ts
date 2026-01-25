@@ -229,14 +229,19 @@ export class WAMonitoringService {
   public async loadInstance() {
     try {
       if (this.providerSession?.ENABLED) {
+        this.logger.info({ msg: 'Loading instances from provider files' });
         await this.loadInstancesFromProvider();
       } else if (this.db.SAVE_DATA.INSTANCE) {
+        this.logger.info({ msg: 'Loading instances from Postgres database' });
         await this.loadInstancesFromDatabasePostgres();
       } else if (this.redis.REDIS.ENABLED && this.redis.REDIS.SAVE_INSTANCES) {
+        this.logger.info({ msg: 'Loading instances from Redis cache' });
         await this.loadInstancesFromRedis();
+      } else {
+        this.logger.warn({ msg: 'No instance persistence configured (provider/db/redis disabled)' });
       }
     } catch (error) {
-      this.logger.error(error);
+      this.logger.error({ localError: 'loadInstance', error });
     }
   }
 
@@ -329,6 +334,12 @@ export class WAMonitoringService {
 
   private async loadInstancesFromRedis() {
     const keys = await this.cache.keys();
+    if (!keys || keys.length === 0) {
+      this.logger.warn({ msg: 'No instance keys found in Redis' });
+      return;
+    }
+
+    this.logger.info({ msg: 'Loading instances from Redis', count: keys.length });
 
     if (keys?.length > 0) {
       await Promise.all(
@@ -364,9 +375,12 @@ export class WAMonitoringService {
       where: { clientName: clientName },
     });
 
-    if (instances.length === 0) {
+    if (!instances || instances.length === 0) {
+      this.logger.warn({ msg: 'No instances found in Postgres for client', clientName });
       return;
     }
+
+    this.logger.info({ msg: 'Loaded instances from Postgres', clientName, count: instances.length });
 
     await Promise.all(
       instances.map(async (instance) => {
